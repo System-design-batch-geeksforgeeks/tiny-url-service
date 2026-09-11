@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Cost-minimal URL shortener demo — HTTP API, two Lambdas, DynamoDB on-demand, no VPC.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: url-shortener-demo
+    Description: Prefix for all named resources (used by destroy).
+  CounterBatchSize:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 10000
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    Timeout: 8
+    MemorySize: 128
+    Environment:
+      Variables:
+        URLS_TABLE: !Ref UrlsTable
+        COUNTERS_TABLE: !Ref CountersTable
+        COUNTER_BATCH_SIZE: !Ref CounterBatchSize
+    Tags:
+      Project: !Ref ProjectName
+      Purpose: interview-demo
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      Tags:
+        Project: !Ref ProjectName
+        Purpose: interview-demo
+
+  UrlsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub ${ProjectName}-urls
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: short_code
+          AttributeType: S
+      KeySchema:
+        - AttributeName: short_code
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: interview-demo
+
+  CountersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub ${ProjectName}-counters
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: counter_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: counter_id
+          KeyType: HASH
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: interview-demo
+
+  WriteLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-write
+      RetentionInDays: 7
+
+  ReadLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-read
+      RetentionInDays: 7
+
+  WriteFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: WriteLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-write
+      CodeUri: src/
+      Handler: url_shortener.handlers.handle_write
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref UrlsTable
+        - DynamoDBWritePolicy:
+            TableName: !Ref CountersTable
+      Events:
+        CreateUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /urls
+            Method: POST
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /health
+            Method: GET
+
+  ReadFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ReadLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-read
+      CodeUri: src/
+      Handler: url_shortener.handlers.handle_read
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref UrlsTable
+      Events:
+        Redirect:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{short_code}
+            Method: GET
+
+Outputs:
+  ApiUrl:
+    Description: Public base URL for short links (no stage prefix)
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  WriteFunctionName:
+    Value: !Ref WriteFunction
+  ReadFunctionName:
+    Value: !Ref ReadFunction
+  UrlsTableName:
+    Value: !Ref UrlsTable
+  CountersTableName:
+    Value: !Ref CountersTable
+  StackName:
+    Value: !Ref AWS::StackName

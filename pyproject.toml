@@ -1,0 +1,14 @@
+[project]
+name = "url-shortener"
+version = "0.1.0"
+description = "Standalone URL shortener — local HLD demo and cost-minimal AWS backend"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
